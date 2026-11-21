@@ -1,6 +1,7 @@
 services:
   db-usuarios:
     image: postgres:18-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: bodega_usuarios
       POSTGRES_USER: ${USUARIOS_DB_USERNAME:?falta USUARIOS_DB_USERNAME en .env}
@@ -14,6 +15,7 @@ services:
 
   db-articulos:
     image: postgres:18-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: bodega_articulos
       POSTGRES_USER: ${ARTICULOS_DB_USERNAME:?falta ARTICULOS_DB_USERNAME en .env}
@@ -27,6 +29,7 @@ services:
 
   ms-usuarios:
     image: ${USUARIOS_IMAGE:-ms-usuarios:local}
+    restart: unless-stopped
     environment:
       USUARIOS_ADDRESS: 0.0.0.0
       USUARIOS_DB_URL: jdbc:postgresql://db-usuarios:5432/bodega_usuarios
@@ -42,6 +45,7 @@ services:
 
   ms-articulos:
     image: ${ARTICULOS_IMAGE:-ms-articulos:local}
+    restart: unless-stopped
     environment:
       ARTICULOS_ADDRESS: 0.0.0.0
       ARTICULOS_DB_URL: jdbc:postgresql://db-articulos:5432/bodega_articulos
@@ -55,6 +59,7 @@ services:
 
   ms-busqueda:
     image: ${BUSQUEDA_IMAGE:-ms-busqueda:local}
+    restart: unless-stopped
     environment:
       BUSQUEDA_ADDRESS: 0.0.0.0
       ARTICULOS_BASE_URL: http://ms-articulos:8082
