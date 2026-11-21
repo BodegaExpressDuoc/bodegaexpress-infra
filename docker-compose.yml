@@ -35,7 +35,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
       JWT_EXPIRACION_MINUTOS: ${JWT_EXPIRACION_MINUTOS:-60}
     ports:
-      - "127.0.0.1:${USUARIOS_HOST_PORT:-8081}:8081"
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${USUARIOS_HOST_PORT:-8081}:8081"
     depends_on:
       db-usuarios:
         condition: service_healthy
@@ -48,7 +48,7 @@ services:
       ARTICULOS_DB_USERNAME: ${ARTICULOS_DB_USERNAME}
       ARTICULOS_DB_PASSWORD: ${ARTICULOS_DB_PASSWORD}
     ports:
-      - "127.0.0.1:${ARTICULOS_HOST_PORT:-8082}:8082"
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${ARTICULOS_HOST_PORT:-8082}:8082"
     depends_on:
       db-articulos:
         condition: service_healthy
@@ -59,7 +59,7 @@ services:
       BUSQUEDA_ADDRESS: 0.0.0.0
       ARTICULOS_BASE_URL: http://ms-articulos:8082
     ports:
-      - "127.0.0.1:${BUSQUEDA_HOST_PORT:-8083}:8083"
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${BUSQUEDA_HOST_PORT:-8083}:8083"
     depends_on:
       - ms-articulos
 
