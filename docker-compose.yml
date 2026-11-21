@@ -1,0 +1,68 @@
+services:
+  db-usuarios:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: bodega_usuarios
+      POSTGRES_USER: ${USUARIOS_DB_USERNAME:?falta USUARIOS_DB_USERNAME en .env}
+      POSTGRES_PASSWORD: ${USUARIOS_DB_PASSWORD:?falta USUARIOS_DB_PASSWORD en .env}
+    volumes:
+      - datos-usuarios:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      retries: 10
+
+  db-articulos:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: bodega_articulos
+      POSTGRES_USER: ${ARTICULOS_DB_USERNAME:?falta ARTICULOS_DB_USERNAME en .env}
+      POSTGRES_PASSWORD: ${ARTICULOS_DB_PASSWORD:?falta ARTICULOS_DB_PASSWORD en .env}
+    volumes:
+      - datos-articulos:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      retries: 10
+
+  ms-usuarios:
+    image: ${USUARIOS_IMAGE:-ms-usuarios:local}
+    environment:
+      USUARIOS_ADDRESS: 0.0.0.0
+      USUARIOS_DB_URL: jdbc:postgresql://db-usuarios:5432/bodega_usuarios
+      USUARIOS_DB_USERNAME: ${USUARIOS_DB_USERNAME}
+      USUARIOS_DB_PASSWORD: ${USUARIOS_DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
+      JWT_EXPIRACION_MINUTOS: ${JWT_EXPIRACION_MINUTOS:-60}
+    ports:
+      - "127.0.0.1:${USUARIOS_HOST_PORT:-8081}:8081"
+    depends_on:
+      db-usuarios:
+        condition: service_healthy
+
+  ms-articulos:
+    image: ${ARTICULOS_IMAGE:-ms-articulos:local}
+    environment:
+      ARTICULOS_ADDRESS: 0.0.0.0
+      ARTICULOS_DB_URL: jdbc:postgresql://db-articulos:5432/bodega_articulos
+      ARTICULOS_DB_USERNAME: ${ARTICULOS_DB_USERNAME}
+      ARTICULOS_DB_PASSWORD: ${ARTICULOS_DB_PASSWORD}
+    ports:
+      - "127.0.0.1:${ARTICULOS_HOST_PORT:-8082}:8082"
+    depends_on:
+      db-articulos:
+        condition: service_healthy
+
+  ms-busqueda:
+    image: ${BUSQUEDA_IMAGE:-ms-busqueda:local}
+    environment:
+      BUSQUEDA_ADDRESS: 0.0.0.0
+      ARTICULOS_BASE_URL: http://ms-articulos:8082
+    ports:
+      - "127.0.0.1:${BUSQUEDA_HOST_PORT:-8083}:8083"
+    depends_on:
+      - ms-articulos
+
+volumes:
+  datos-usuarios:
+  datos-articulos:
