@@ -1,0 +1,33 @@
+name: Recursos AWS
+
+# Crea o actualiza los recursos cloud (ECR, SQS, Security Group y API Gateway).
+# Se ejecuta al cambiar los scripts de aws/ en main, o a mano desde la pestaña Actions.
+on:
+  push:
+    branches: [main]
+    paths: ['aws/**', '.github/workflows/aws.yml']
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  configurar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configurar credenciales de AWS
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Crear o actualizar recursos
+        env:
+          EC2_HOST: ${{ vars.EC2_HOST }}
+          EC2_SG_ID: ${{ vars.EC2_SG_ID }}
+          GATEWAY_SECRET: ${{ secrets.GATEWAY_SECRET }}
+        run: bash aws/configurar-aws.sh
