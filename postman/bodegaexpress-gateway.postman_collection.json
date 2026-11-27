@@ -1,0 +1,327 @@
+{
+  "info": {
+    "name": "bodegaexpress-gateway",
+    "description": "Prueba de punta a punta del sistema BodegaExpress a través del AWS API Gateway.\n\nEjecutar en orden (Collection Runner):\n1. El Gateway rechaza las peticiones sin token o con token inválido (Lambda Authorizer).\n2. Registro y login (rutas públicas): el token JWT se guarda en la variable `token`.\n3. CRUD de artículos con token. Crear un artículo con stock 2 publica un evento en SQS y la Lambda `bodegaexpress-alerta-stock` registra la alerta en CloudWatch:\n   aws logs tail /aws/lambda/bodegaexpress-alerta-stock --since 5m\n4. Búsqueda (ms-busqueda → ms-articulos).\n5. Acceso directo a la EC2 sin pasar por el Gateway: el microservicio responde 403.\n6. Limpieza: elimina el artículo y el usuario de prueba.\n\nVariables a completar: `gatewayUrl` (URL que muestra aws/configurar-aws.sh) y `ec2Url` (http://<IP elástica>:8082).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Seguridad del Gateway",
+      "item": [
+        {
+          "name": "1.1 Artículos sin token (Gateway responde 401)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gatewayUrl}}/api/v1/articulos",
+            "auth": { "type": "noauth" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('El Gateway rechaza la petición sin token (401)', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "1.2 Artículos con token inválido (autorizador responde 403)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gatewayUrl}}/api/v1/articulos",
+            "auth": {
+              "type": "bearer",
+              "bearer": [ { "key": "token", "value": "token.invalido.123", "type": "string" } ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('El Lambda Authorizer rechaza el token inválido (403)', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Registro y login (públicos)",
+      "item": [
+        {
+          "name": "2.1 Registrar usuario",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "url": "{{gatewayUrl}}/api/v1/usuarios",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Demo\",\n  \"apellido\": \"Gateway\",\n  \"email\": \"demo.{{$timestamp}}@bodega.cl\",\n  \"password\": \"Clave123\"\n}"
+            },
+            "auth": { "type": "noauth" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 201 Created', () => pm.response.to.have.status(201));",
+                  "const usuario = pm.response.json();",
+                  "pm.test('No devuelve la contraseña', () => pm.expect(usuario).to.not.have.property('password'));",
+                  "pm.collectionVariables.set('usuarioId', usuario.id);",
+                  "pm.collectionVariables.set('usuarioEmail', usuario.email);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2.2 Iniciar sesión (obtiene el JWT)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "url": "{{gatewayUrl}}/api/v1/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{usuarioEmail}}\",\n  \"password\": \"Clave123\"\n}"
+            },
+            "auth": { "type": "noauth" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200 OK', () => pm.response.to.have.status(200));",
+                  "const token = pm.response.json().token;",
+                  "pm.test('Devuelve un token JWT', () => pm.expect(token).to.be.a('string').and.not.empty);",
+                  "pm.collectionVariables.set('token', token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2.3 Listar usuarios con token",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gatewayUrl}}/api/v1/usuarios"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Devuelve una lista', () => pm.expect(pm.response.json()).to.be.an('array'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Artículos, cola SQS y Lambda",
+      "item": [
+        {
+          "name": "3.1 Crear artículo con stock bajo (dispara la alerta)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "url": "{{gatewayUrl}}/api/v1/articulos",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Caja demo {{$timestamp}}\",\n  \"descripcion\": \"Caja mediana de cartón\",\n  \"precio\": 2500.5,\n  \"stock\": 2\n}"
+            },
+            "description": "ms-articulos publica el evento CREACION en SQS. La Lambda bodegaexpress-alerta-stock lo consume y registra 'ALERTA STOCK BAJO' en CloudWatch (stock 2 < umbral 5)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 201 Created', () => pm.response.to.have.status(201));",
+                  "const articulo = pm.response.json();",
+                  "pm.test('Stock bajo el umbral', () => pm.expect(articulo.stock).to.be.below(5));",
+                  "pm.collectionVariables.set('articuloId', articulo.id);",
+                  "pm.collectionVariables.set('articuloNombre', articulo.nombre);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3.2 Obtener artículo",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gatewayUrl}}/api/v1/articulos/{{articuloId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Es el artículo creado', () => pm.expect(pm.response.json().id).to.eql(Number(pm.collectionVariables.get('articuloId'))));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3.3 Reponer stock (sin alerta)",
+          "request": {
+            "method": "PUT",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "url": "{{gatewayUrl}}/api/v1/articulos/{{articuloId}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"{{articuloNombre}}\",\n  \"descripcion\": \"Caja mediana de cartón\",\n  \"precio\": 2500.5,\n  \"stock\": 50\n}"
+            },
+            "description": "Publica el evento ACTUALIZACION; con stock 50 la Lambda registra 'Sin alerta'."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Actualiza el stock', () => pm.expect(pm.response.json().stock).to.eql(50));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Búsqueda",
+      "item": [
+        {
+          "name": "4.1 Buscar el artículo por nombre",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/busqueda?nombre={{articuloNombre}}",
+              "host": [ "{{gatewayUrl}}" ],
+              "path": [ "api", "v1", "busqueda" ],
+              "query": [ { "key": "nombre", "value": "{{articuloNombre}}" } ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200 OK', () => pm.response.to.have.status(200));",
+                  "const ids = pm.response.json().map(a => a.id);",
+                  "pm.test('Encuentra el artículo creado', () => pm.expect(ids).to.include(Number(pm.collectionVariables.get('articuloId'))));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Acceso directo a la EC2 (sin Gateway)",
+      "item": [
+        {
+          "name": "5.1 Artículos directo a la EC2 (microservicio responde 403)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{ec2Url}}/api/v1/articulos",
+            "description": "La petición no trae el header X-Gateway-Secret que agrega el API Gateway, así que el FiltroGateway de ms-articulos la rechaza aunque el puerto esté abierto."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('El microservicio rechaza el acceso directo (403)', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6. Limpieza",
+      "item": [
+        {
+          "name": "6.1 Eliminar artículo",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{gatewayUrl}}/api/v1/articulos/{{articuloId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 204 No Content', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6.2 Eliminar usuario de prueba",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{gatewayUrl}}/api/v1/usuarios/{{usuarioId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 204 No Content', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    { "key": "gatewayUrl", "value": "https://<id-api>.execute-api.us-east-1.amazonaws.com" },
+    { "key": "ec2Url", "value": "http://<ip-elastica>:8082" },
+    { "key": "token", "value": "" },
+    { "key": "usuarioId", "value": "" },
+    { "key": "usuarioEmail", "value": "" },
+    { "key": "articuloId", "value": "" },
+    { "key": "articuloNombre", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [ { "key": "token", "value": "{{token}}", "type": "string" } ]
+  }
+}
