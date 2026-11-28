@@ -108,8 +108,17 @@ Al final muestra la URL del API Gateway.
 
 ### 5. Microservicios
 
-Push a `main` en cada microservicio: build, test, imagen a ECR (tags versión, sha y
-`latest`) y despliegue en la EC2 con `cicd.sh`.
+Pull request `develop` → `main` en cada microservicio (en este orden: ms-usuarios,
+ms-articulos y ms-busqueda, porque ms-busqueda depende de ms-articulos). El merge
+dispara build, test, imagen a ECR y despliegue en la EC2 con `cicd.sh`.
+
+La imagen se sube con tres tags: la versión del `pom.xml` (por ejemplo `0.2.0`), el
+sha corto del commit y `latest`. La EC2 usa `latest` (variables `*_IMAGE` del `.env`);
+los tags de versión y sha permiten saber qué código corre y volver a una imagen
+anterior.
+
+> En `develop` y en los pull request solo se compila y se prueba: a AWS solo se
+> despliega lo que llega a `main`.
 
 ## Rutas del API Gateway
 
@@ -158,6 +167,16 @@ curl -s -X POST $API/api/v1/articulos -H "Authorization: Bearer $TOKEN" \
 # 4. La alerta de stock bajo aparece en CloudWatch
 aws logs tail /aws/lambda/bodegaexpress-alerta-stock --since 5m
 ```
+
+## Versiones
+
+Las ramas `main` de los 5 repositorios están protegidas (solo cambian mediante pull
+request desde `develop`) y cada entrega se marca con un tag anotado en `main`:
+
+| Tag | Entrega | Repositorios |
+|---|---|---|
+| `v0.1.0` | Evaluación Parcial 2: microservicios con PostgreSQL | ms-usuarios, ms-articulos, ms-busqueda |
+| `v0.2.0` | Evaluación Parcial 3: Docker, CI/CD, SQS, Lambda y API Gateway en AWS | Los 5 repositorios |
 
 ## Mejoras futuras
 
